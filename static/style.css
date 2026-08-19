@@ -246,6 +246,7 @@ button:hover { border-color: var(--accent); }
 #settings-account-name, #settings-account-dc { display: none; }
 .row-icon, .row-chevron { display: none; }
 #logout-btn { margin-left: auto; padding: 0.25rem 0.6rem; font-size: 0.75rem; }
+#settings-menu { display: none; }
 
 #auth-box { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 #auth-msg { font-size: 0.78rem; color: var(--muted); }
@@ -313,16 +314,24 @@ tbody tr:hover { background: var(--panel-alt); }
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
 }
-#chart-symbol-label { font-weight: 600; }
-#timeframe-buttons { display: flex; gap: 0.25rem; }
-.tf-btn { padding: 0.25rem 0.55rem; font-size: 0.75rem; }
-.tf-btn.active { border-color: var(--accent); color: var(--accent); }
+#tf-select-btn { font-weight: 700; background: transparent; border: none; color: var(--text); padding: 0.25rem 0.4rem; font-size: 0.95rem; }
 
 #chart-tools { display: flex; gap: 0.25rem; margin-left: auto; }
 .tool-btn { padding: 0.25rem 0.5rem; font-size: 0.8rem; line-height: 1; }
 .tool-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 
-#main-chart { flex: 3; min-height: 0; }
+#main-chart-wrap { flex: 3; min-height: 0; position: relative; }
+#main-chart { width: 100%; height: 100%; }
+#chart-symbol-label {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.6rem;
+  z-index: 2;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  pointer-events: none;
+}
 #rsi-chart { flex: 1; min-height: 0; border-top: 1px solid var(--border); }
 #macd-chart { flex: 1; min-height: 0; border-top: 1px solid var(--border); }
 
@@ -457,8 +466,7 @@ tbody tr:hover { background: var(--panel-alt); }
   #account-bar { gap: 0.5rem 0.9rem; font-size: 0.72rem; }
   h1 { font-size: 0.9rem; width: 100%; }
 
-  #chart-toolbar { flex-wrap: wrap; row-gap: 0.4rem; }
-  #chart-symbol-label { width: 100%; }
+  #chart-toolbar { flex-wrap: nowrap; }
   #chart-tools { margin-left: 0; }
 
   #market-watch th:nth-child(4), #market-watch td:nth-child(4) { display: none; }
@@ -594,6 +602,22 @@ tbody tr:hover { background: var(--panel-alt); }
     color: var(--red);
   }
   #header #logout-btn .row-icon { width: 17px; height: 17px; fill: none; stroke: var(--red); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; margin: 0; }
+
+  #settings-menu { display: block; border-bottom: 8px solid var(--bg, #08090c); }
+  .settings-nav-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+    text-align: left;
+  }
+  .settings-nav-row .row-icon { width: 19px; height: 19px; fill: none; stroke: var(--text); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; margin-right: 0.9rem; flex-shrink: 0; }
+  .settings-nav-row .row-chevron { width: 16px; height: 16px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; margin-left: 0.5rem; }
+  .settings-nav-text { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+  .settings-nav-title { font-size: 0.95rem; color: var(--text); }
+  .settings-nav-sub { font-size: 0.75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   #bottom-nav {
     display: flex;

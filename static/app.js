@@ -11,7 +11,7 @@ const state = {
   prices: {}, // symbol -> {bid, ask, last}
   tickDirection: {}, // symbol -> "up" | "down"
   currentSymbol: "BTC/USDT",
-  timeframe: "1m",
+  timeframe: "1h",
   orderMode: "market",
   historyRange: "day",
   historySearch: "",
@@ -362,6 +362,37 @@ function openAddSymbolModal() {
   });
 }
 
+function setupSettingsMenu() {
+  document.querySelectorAll(".settings-nav-row[data-nav]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.nav;
+      if (target === "journal") { openJournalModal(); return; }
+      setMobilePanel(target);
+    });
+  });
+  document.querySelectorAll(".settings-nav-row[data-info]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      openModal("提示", `<p style="color: var(--muted); margin: 0;">呢個功能暫時未有開放。</p>`, async () => {});
+      $("modal-confirm").textContent = "知道了";
+      $("modal-cancel").classList.add("hidden");
+    });
+  });
+}
+
+async function openJournalModal() {
+  const data = await api("/api/journal");
+  const entries = data.journal || [];
+  const body = entries.length
+    ? entries.slice().reverse().map((j) => `<div style="padding:0.5rem 0; border-bottom:1px solid var(--border); font-size:0.82rem;">
+        <div style="color:var(--muted); font-size:0.72rem;">${new Date(j.time).toLocaleString()}</div>
+        <div>${j.message}</div>
+      </div>`).join("")
+    : `<p style="color: var(--muted); margin: 0;">暫時未有日誌記錄。</p>`;
+  openModal("日誌", `<div style="max-height:60vh; overflow-y:auto;">${body}</div>`, async () => {});
+  $("modal-confirm").textContent = "關閉";
+  $("modal-cancel").classList.add("hidden");
+}
+
 function splitPriceDigits(price, prec) {
   if (price === null || price === undefined) return `<span class="digit-normal">-</span>`;
   const str = price.toFixed(prec);
@@ -458,9 +489,29 @@ function renderMarketWatch() {
   }
 }
 
+const TF_LABELS = { "1m": "M1", "5m": "M5", "15m": "M15", "1h": "H1", "4h": "H4", "1d": "D1" };
+
+function updateChartLabels() {
+  const tfLabel = TF_LABELS[state.timeframe] || state.timeframe;
+  $("tf-select-btn").textContent = tfLabel;
+  $("chart-symbol-label").textContent = `${dispSym(state.currentSymbol)}, ${tfLabel}`;
+}
+
+function openTimeframePicker() {
+  const actions = Object.entries(TF_LABELS).map(([tf, label]) => ({
+    label,
+    onClick: () => {
+      state.timeframe = tf;
+      updateChartLabels();
+      loadChart(state.currentSymbol, state.timeframe);
+    },
+  }));
+  openActionSheet("選擇時間週期", actions);
+}
+
 function selectSymbol(symbol) {
   state.currentSymbol = symbol;
-  $("chart-symbol-label").textContent = dispSym(symbol);
+  updateChartLabels();
   $("order-symbol-name").textContent = dispSym(symbol);
   state.sparkline = [];
   state.orderSl = null;
@@ -1165,11 +1216,7 @@ $("oneclick-buy").addEventListener("click", () => submitMarketOrder("buy"));
 $("oneclick-sell").addEventListener("click", () => submitMarketOrder("sell"));
 $("submit-order-btn").addEventListener("click", submitPendingOrder);
 document.querySelectorAll(".mode-btn").forEach((b) => b.addEventListener("click", () => setOrderMode(b.dataset.mode)));
-document.querySelectorAll(".tf-btn").forEach((b) => b.addEventListener("click", () => {
-  document.querySelectorAll(".tf-btn").forEach((x) => x.classList.toggle("active", x === b));
-  state.timeframe = b.dataset.tf;
-  loadChart(state.currentSymbol, state.timeframe);
-}));
+$("tf-select-btn").addEventListener("click", openTimeframePicker);
 $("crosshair-btn").addEventListener("click", toggleCrosshair);
 $("hline-btn").addEventListener("click", toggleHlineTool);
 $("clear-lines-btn").addEventListener("click", clearLines);
@@ -1183,6 +1230,7 @@ $("pp-add-btn").addEventListener("click", () => setMobilePanel("order-panel"));
   setupHistoryPanel();
   setupOrderTicket();
   setupWatchViewToggle();
+  setupSettingsMenu();
   setupMobileNav();
   setOrderMode("market");
   await loadSymbols();
