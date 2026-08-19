@@ -418,26 +418,54 @@ function renderMobileQuote() {
   $("mq-bid").className = cls;
   $("mq-ask").textContent = p ? fmt(p.ask, prec) : "-";
   $("mq-ask").className = cls;
-  if (p) pushSparklinePoint(p.bid);
+  if (p) pushSparklinePoint(p.bid, p.ask);
 }
 
-function pushSparklinePoint(bid) {
-  state.sparkline.push(bid);
-  if (state.sparkline.length > 60) state.sparkline.shift();
+function pushSparklinePoint(bid, ask) {
+  state.sparkline.push({ bid, ask });
+  if (state.sparkline.length > 80) state.sparkline.shift();
+  drawSparkline();
+}
+
+function drawSparkline() {
   const svg = $("order-sparkline");
-  if (!svg || state.sparkline.length < 2) return;
-  const min = Math.min(...state.sparkline);
-  const max = Math.max(...state.sparkline);
-  const range = max - min || 1;
-  const w = 300, h = 100, pad = 6;
-  const pts = state.sparkline.map((v, i) => {
-    const x = (i / (state.sparkline.length - 1)) * w;
-    const y = pad + (1 - (v - min) / range) * (h - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  const dir = state.tickDirection[state.currentSymbol];
-  const color = dir === "down" ? "var(--red)" : "var(--accent)";
-  svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const data = state.sparkline;
+  if (!svg || data.length < 2) return;
+  const prec = pricePrecision(state.currentSymbol);
+  const all = data.flatMap((d) => [d.bid, d.ask]);
+  const min = Math.min(...all);
+  const max = Math.max(...all);
+  const range = (max - min) || 1;
+  const w = 300, h = 120, padY = 8, padRight = 54;
+  const plotW = w - padRight;
+  const xAt = (i) => (i / (data.length - 1)) * plotW;
+  const yAt = (v) => padY + (1 - (v - min) / range) * (h - padY * 2);
+
+  const line = (key) => data.map((d, i) => `${xAt(i).toFixed(1)},${yAt(d[key]).toFixed(1)}`).join(" ");
+
+  const gridCount = 4;
+  let gridLines = "";
+  for (let i = 0; i <= gridCount; i++) {
+    const v = min + (range * i) / gridCount;
+    const y = yAt(v);
+    gridLines += `<line x1="0" y1="${y.toFixed(1)}" x2="${plotW}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 3"/>`;
+    gridLines += `<text x="${plotW + 6}" y="${(y + 3).toFixed(1)}" font-size="9" fill="var(--muted)">${fmt(v, prec)}</text>`;
+  }
+
+  const last = data[data.length - 1];
+  const bidY = yAt(last.bid), askY = yAt(last.ask);
+
+  svg.innerHTML = `
+    ${gridLines}
+    <polyline points="${line("ask")}" fill="none" stroke="var(--red)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <polyline points="${line("bid")}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <line x1="0" y1="${askY.toFixed(1)}" x2="${plotW}" y2="${askY.toFixed(1)}" stroke="var(--red)" stroke-width="1" stroke-dasharray="3 2" opacity="0.6"/>
+    <line x1="0" y1="${bidY.toFixed(1)}" x2="${plotW}" y2="${bidY.toFixed(1)}" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 2" opacity="0.6"/>
+    <rect x="${plotW + 2}" y="${(askY - 7).toFixed(1)}" width="${padRight - 4}" height="14" fill="var(--red)"/>
+    <text x="${plotW + 6}" y="${(askY + 3).toFixed(1)}" font-size="9" font-weight="700" fill="white">${fmt(last.ask, prec)}</text>
+    <rect x="${plotW + 2}" y="${(bidY - 7).toFixed(1)}" width="${padRight - 4}" height="14" fill="var(--accent)"/>
+    <text x="${plotW + 6}" y="${(bidY + 3).toFixed(1)}" font-size="9" font-weight="700" fill="white">${fmt(last.bid, prec)}</text>
+  `;
 }
 
 async function loadDayHiLo(symbol) {
@@ -478,8 +506,14 @@ function setupOrderTicket() {
     btn.addEventListener("click", () => {
       const step = parseFloat(btn.dataset.step);
       state.orderQty = Math.max(0.01, Math.round((state.orderQty + step) * 100) / 100);
-      $("qty-display").textContent = fmt(state.orderQty, 2);
+      $("qty-display").value = state.orderQty.toFixed(2);
     });
+  });
+
+  $("qty-display").addEventListener("change", () => {
+    const v = parseFloat($("qty-display").value);
+    state.orderQty = v > 0 ? Math.round(v * 100) / 100 : 0.01;
+    $("qty-display").value = state.orderQty.toFixed(2);
   });
 
   document.querySelectorAll(".ticket-field-row").forEach((row) => {
@@ -541,7 +575,7 @@ function openSymbolSwitcher() {
 }
 
 async function submitMobileMarketOrder(side) {
-  const qty = state.orderQty;
+  const qty = parseFloat($("qty-display").value) || state.orderQty;
   if (!qty || qty <= 0) { $("order-mobile-msg").textContent = "請輸入有效數量"; return; }
   const result = await post("/api/order/market", {
     symbol: state.currentSymbol, side, qty, sl: state.orderSl, tp: state.orderTp,
@@ -990,7 +1024,7 @@ function setMobilePanel(panelId) {
     renderTicketField("sl");
     renderTicketField("tp");
     renderTicketField("dev");
-    $("qty-display").textContent = fmt(state.orderQty, 2);
+    $("qty-display").value = state.orderQty.toFixed(2);
     renderMobileQuote();
   }
 }

@@ -1,15 +1,15 @@
 :root {
   color-scheme: light dark;
-  --bg: #0d0f14;
-  --panel: #151822;
-  --panel-alt: #1b1f2b;
-  --border: #262b38;
-  --text: #e7e9ee;
-  --muted: #8b93a7;
+  --bg: #000000;
+  --panel: #000000;
+  --panel-alt: #1c1c1e;
+  --border: #2c2c2e;
+  --text: #ffffff;
+  --muted: #8e8e93;
   --green: #3ddc84;
   --red: #ff5c5c;
-  --accent: #5b8def;
-  --accent-dim: #2a3a5c;
+  --accent: #4d8afa;
+  --accent-dim: #1c2a44;
 }
 
 * { box-sizing: border-box; }
@@ -333,7 +333,22 @@ tbody tr:hover { background: var(--panel-alt); }
 #order-mode-label { text-align: center; padding: 0.8rem 0; color: var(--text); font-size: 0.95rem; border-bottom: 1px solid var(--border); }
 #qty-stepper { display: flex; align-items: center; justify-content: space-between; padding: 0.9rem 1rem; border-bottom: 1px solid var(--border); }
 .qty-step-btn { background: transparent; border: none; color: var(--accent); font-size: 0.95rem; font-weight: 600; padding: 0.3rem 0.4rem; }
-#qty-display { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+#qty-display {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  width: 4rem;
+  text-align: center;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 0.1rem 0;
+  -moz-appearance: textfield;
+}
+#qty-display::-webkit-outer-spin-button, #qty-display::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .ticket-field-row { display: flex; align-items: center; padding: 0.9rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
 .ticket-field-label { width: 4.2rem; color: var(--text); flex-shrink: 0; }
 .ticket-field-btn { background: transparent; border: none; color: var(--accent); font-size: 1.3rem; font-weight: 600; width: 2rem; flex-shrink: 0; line-height: 1; }
