@@ -12,6 +12,8 @@ const state = {
   orderMode: "market",
   historyRange: "day",
   historySearch: "",
+  historyCustomStart: null,
+  historyCustomEnd: null,
   lastHistory: [],
   lastAccountSummary: null,
   expandedTicket: null,
@@ -453,7 +455,10 @@ function drawSparkline() {
   const min = Math.min(...all);
   const max = Math.max(...all);
   const range = (max - min) || 1;
-  const w = 300, h = 120, padY = 8, padRight = 54;
+  const last = data[data.length - 1];
+  const w = 300, h = 120, padY = 8;
+  const maxLabelLen = Math.max(fmt(min, prec).length, fmt(max, prec).length, fmt(last.bid, prec).length, fmt(last.ask, prec).length);
+  const padRight = Math.max(46, maxLabelLen * 5.6 + 14);
   const plotW = w - padRight;
   const xAt = (i) => (i / (data.length - 1)) * plotW;
   const yAt = (v) => padY + (1 - (v - min) / range) * (h - padY * 2);
@@ -469,7 +474,6 @@ function drawSparkline() {
     gridLines += `<text x="${plotW + 6}" y="${(y + 3).toFixed(1)}" font-size="9" fill="var(--muted)">${fmt(v, prec)}</text>`;
   }
 
-  const last = data[data.length - 1];
   const bidY = yAt(last.bid), askY = yAt(last.ask);
 
   svg.innerHTML = `
@@ -910,14 +914,25 @@ function historyRangeStart(range) {
     return d;
   }
   if (range === "month") return new Date(now.getFullYear(), now.getMonth(), 1);
-  return null; // "all" / custom
+  if (range === "custom") return state.historyCustomStart ? new Date(state.historyCustomStart + "T00:00:00") : null;
+  return null;
+}
+
+function historyRangeEnd(range) {
+  if (range === "custom" && state.historyCustomEnd) {
+    return new Date(state.historyCustomEnd + "T23:59:59");
+  }
+  return null;
 }
 
 function renderHistoryMobilePanel() {
   const rangeStart = historyRangeStart(state.historyRange);
+  const rangeEnd = historyRangeEnd(state.historyRange);
   const query = state.historySearch.trim().toUpperCase();
   const rows = state.lastHistory.filter((h) => {
-    if (rangeStart && new Date(h.close_time) < rangeStart) return false;
+    const closeTime = new Date(h.close_time);
+    if (rangeStart && closeTime < rangeStart) return false;
+    if (rangeEnd && closeTime > rangeEnd) return false;
     if (query && !h.symbol.toUpperCase().includes(query)) return false;
     return true;
   });
@@ -951,11 +966,26 @@ function setupHistoryPanel() {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".hist-filter-btn").forEach((b) => b.classList.toggle("active", b === btn));
       state.historyRange = btn.dataset.range;
+      $("history-custom-range").classList.toggle("hidden", btn.dataset.range !== "custom");
+      if (btn.dataset.range === "custom" && !state.historyCustomStart) {
+        const today = new Date();
+        const monthAgo = new Date(today);
+        monthAgo.setDate(monthAgo.getDate() - 30);
+        state.historyCustomStart = monthAgo.toISOString().slice(0, 10);
+        state.historyCustomEnd = today.toISOString().slice(0, 10);
+        $("history-custom-start").value = state.historyCustomStart;
+        $("history-custom-end").value = state.historyCustomEnd;
+      }
       renderHistoryMobilePanel();
     });
   });
   $("history-search-input").addEventListener("input", (e) => {
     state.historySearch = e.target.value;
+    renderHistoryMobilePanel();
+  });
+  $("history-custom-ok").addEventListener("click", () => {
+    state.historyCustomStart = $("history-custom-start").value || null;
+    state.historyCustomEnd = $("history-custom-end").value || null;
     renderHistoryMobilePanel();
   });
 }
