@@ -613,9 +613,15 @@ tbody tr:hover { background: var(--panel-alt); }
     background: transparent;
     text-align: left;
   }
-  .settings-nav-row .row-icon { width: 19px; height: 19px; fill: none; stroke: var(--text); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; margin-right: 0.9rem; flex-shrink: 0; }
+  .settings-nav-row .row-icon { width: 17px; height: 17px; fill: none; stroke: white; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .settings-nav-row .row-chevron { width: 16px; height: 16px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; margin-left: 0.5rem; }
   .settings-nav-text { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+  .icon-badge, .icon-badge-spacer { width: 30px; height: 30px; border-radius: 7px; margin-right: 0.9rem; flex-shrink: 0; }
+  .icon-badge { display: flex; align-items: center; justify-content: center; }
+  .badge-green { background: #34c759; }
+  .badge-blue { background: #007aff; }
+  .badge-orange { background: #ff9500; }
+  .badge-gray { background: #8e8e93; }
   .settings-nav-title { font-size: 0.95rem; color: var(--text); }
   .settings-nav-sub { font-size: 0.75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
