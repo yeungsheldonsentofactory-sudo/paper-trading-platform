@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>模擬投資基金</title>
-<link rel="stylesheet" href="/static/style.css?v=25">
+<link rel="stylesheet" href="/static/style.css?v=26">
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
@@ -160,7 +160,9 @@
         <button id="mq-buy-btn" class="mq-btn buy">Buy</button>
       </div>
 
-      <svg id="order-sparkline" viewBox="0 0 300 120" preserveAspectRatio="none"></svg>
+      <div id="order-sparkline-wrap">
+        <svg id="order-sparkline" viewBox="0 0 300 120" preserveAspectRatio="none"></svg>
+      </div>
       <div id="order-mobile-msg"></div>
     </div>
   </aside>
