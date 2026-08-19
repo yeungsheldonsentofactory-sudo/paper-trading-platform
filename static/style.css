@@ -448,6 +448,11 @@ tbody tr:hover { background: var(--panel-alt); }
 
   #market-watch th:nth-child(4), #market-watch td:nth-child(4) { display: none; }
 
+  #market-watch table { font-size: 1.05rem; }
+  #market-watch th { font-size: 0.8rem; }
+  #market-watch th, #market-watch td { padding: 0.7rem 0.4rem; }
+  #market-watch td:first-child { font-size: 1.1rem; font-weight: 700; }
+
   main {
     display: block;
     position: relative;
