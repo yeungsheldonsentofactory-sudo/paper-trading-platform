@@ -5,6 +5,9 @@ const state = {
   symbols: [],
   hiddenSymbols: JSON.parse(localStorage.getItem("hiddenSymbols") || "[]"),
   watchEditMode: false,
+  watchViewMode: "simple",
+  tickTime: {},
+  dayHiLo: {},
   prices: {}, // symbol -> {bid, ask, last}
   tickDirection: {}, // symbol -> "up" | "down"
   currentSymbol: "BTC/USDT",
@@ -359,6 +362,71 @@ function openAddSymbolModal() {
   });
 }
 
+function splitPriceDigits(price, prec) {
+  if (price === null || price === undefined) return `<span class="digit-normal">-</span>`;
+  const str = price.toFixed(prec);
+  const [intPart, decPart = ""] = str.split(".");
+  const normalCount = Math.max(prec - 3, 0);
+  const bigCount = Math.min(prec - normalCount, 2);
+  const normal = decPart.slice(0, normalCount);
+  const big = decPart.slice(normalCount, normalCount + bigCount);
+  const tiny = decPart.slice(normalCount + bigCount);
+  const intWithComma = Number(intPart).toLocaleString();
+  return `<span class="digit-normal">${intWithComma}${normal ? "." + normal : (big || tiny ? "." : "")}</span><span class="digit-big">${big}</span><span class="digit-tiny">${tiny}</span>`;
+}
+
+function renderMarketWatchAdvanced() {
+  const wrap = $("market-watch-advanced");
+  const list = state.symbols.filter((s) => !state.hiddenSymbols.includes(s));
+  wrap.innerHTML = list.map((s) => {
+    const p = state.prices[s];
+    const prec = pricePrecision(s);
+    const tickClass = state.tickDirection[s] === "up" ? "tick-up" : state.tickDirection[s] === "down" ? "tick-down" : "";
+    const t = state.tickTime[s];
+    const timeStr = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}` : "-";
+    const spreadPts = p ? Math.round((p.ask - p.bid) * Math.pow(10, prec)) : "-";
+    const hl = state.dayHiLo[s];
+    return `<div class="watch-card" data-symbol="${s}">
+      <div class="wc-time">${timeStr}</div>
+      <div class="wc-symbol">${dispSym(s)}</div>
+      <div class="wc-price ${tickClass}">${splitPriceDigits(p ? p.bid : null, prec)}</div>
+      <div class="wc-price ${tickClass}">${splitPriceDigits(p ? p.ask : null, prec)}</div>
+      <div class="wc-meta-label">點差: ${spreadPts}</div>
+      <div class="wc-meta-hilo">最低: <span>${hl ? fmt(hl.low, prec) : "-"}</span>　最高: <span>${hl ? fmt(hl.high, prec) : "-"}</span></div>
+    </div>`;
+  }).join("");
+  wrap.querySelectorAll(".watch-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      selectSymbol(card.dataset.symbol);
+      if (isMobileView()) setMobilePanel("chart-area");
+    });
+  });
+}
+
+async function loadAllDayHiLo() {
+  await Promise.all(state.symbols.map(async (s) => {
+    const data = await api(`/api/ohlcv/${s}?timeframe=1d&limit=1`);
+    const bar = (data.bars || [])[0];
+    if (bar) state.dayHiLo[s] = { high: bar.high, low: bar.low };
+  }));
+  if (state.watchViewMode === "advanced") renderMarketWatchAdvanced();
+}
+
+function setupWatchViewToggle() {
+  document.querySelectorAll(".watch-view-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".watch-view-btn").forEach((b) => b.classList.toggle("active", b === btn));
+      state.watchViewMode = btn.dataset.mode;
+      $("market-watch-table").classList.toggle("hidden", state.watchViewMode !== "simple");
+      $("market-watch-advanced").classList.toggle("hidden", state.watchViewMode !== "advanced");
+      if (state.watchViewMode === "advanced") {
+        renderMarketWatchAdvanced();
+        loadAllDayHiLo();
+      }
+    });
+  });
+}
+
 function renderMarketWatch() {
   const tbody = $("market-watch-body");
   const list = state.watchEditMode ? state.symbols : state.symbols.filter((s) => !state.hiddenSymbols.includes(s));
@@ -375,6 +443,7 @@ function renderMarketWatch() {
       return `<tr data-symbol="${s}"><td${active}>${dispSym(s)}</td><td class="${tickClass}">${p ? fmt(p.bid, prec) : "-"}</td><td class="${tickClass}">${p ? fmt(p.ask, prec) : "-"}</td><td>${spread}</td></tr>`;
     })
     .join("");
+  if (state.watchViewMode === "advanced") renderMarketWatchAdvanced();
   if (state.watchEditMode) {
     tbody.querySelectorAll(".watch-remove-btn").forEach((b) => {
       b.addEventListener("click", (e) => { e.stopPropagation(); removeFromWatch(b.dataset.symbol); });
@@ -1023,6 +1092,9 @@ function connectWs() {
       if (old) {
         if (newPrices[sym].bid > old.bid) state.tickDirection[sym] = "up";
         else if (newPrices[sym].bid < old.bid) state.tickDirection[sym] = "down";
+        if (newPrices[sym].bid !== old.bid || newPrices[sym].ask !== old.ask) state.tickTime[sym] = new Date();
+      } else {
+        state.tickTime[sym] = new Date();
       }
     }
     state.prices = newPrices;
@@ -1110,6 +1182,7 @@ $("pp-add-btn").addEventListener("click", () => setMobilePanel("order-panel"));
   setupTabs();
   setupHistoryPanel();
   setupOrderTicket();
+  setupWatchViewToggle();
   setupMobileNav();
   setOrderMode("market");
   await loadSymbols();

@@ -45,6 +45,21 @@ h2 { font-size: 0.75rem; color: var(--muted); margin: 0.6rem 0 0.3rem; text-tran
 
 #market-watch-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
 #market-watch-header h2 { margin: 0; }
+#watch-view-toggle {
+  display: none;
+  background: var(--panel-alt, #1c1c1e);
+  border-radius: 9px;
+  padding: 2px;
+}
+.watch-view-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 0.4rem 0.9rem;
+  border-radius: 7px;
+}
+.watch-view-btn.active { background: var(--border); color: var(--text); font-weight: 600; }
 #watch-edit-btn, #watch-add-btn { padding: 0.25rem 0.55rem; font-size: 0.75rem; line-height: 1; }
 #watch-edit-btn.active { border-color: var(--accent); color: var(--accent); }
 .watch-remove-btn { color: var(--red); border-color: var(--red); padding: 0.1rem 0.4rem; font-size: 0.7rem; }
@@ -448,10 +463,26 @@ tbody tr:hover { background: var(--panel-alt); }
 
   #market-watch th:nth-child(4), #market-watch td:nth-child(4) { display: none; }
 
-  #market-watch table { font-size: 1.05rem; }
-  #market-watch th { font-size: 0.8rem; }
-  #market-watch th, #market-watch td { padding: 0.7rem 0.4rem; }
-  #market-watch td:first-child { font-size: 1.1rem; font-weight: 700; }
+  #market-watch table { font-size: 1.3rem; }
+  #market-watch thead { display: none; }
+  #market-watch th, #market-watch td { padding: 0.85rem 0.4rem; }
+  #market-watch th:first-child, #market-watch td:first-child { width: 34%; }
+  #market-watch td:first-child { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+  #market-watch td:nth-child(2), #market-watch td:nth-child(3) { font-size: 1.2rem; font-weight: 700; }
+
+  #market-watch-header h2 { display: none; }
+  #watch-view-toggle { display: flex; flex: 1; justify-content: center; margin: 0 0.5rem; }
+
+  .watch-card { display: grid; grid-template-columns: 34% 33% 33%; padding: 0.7rem 0.4rem; border-bottom: 1px solid var(--border); align-items: baseline; }
+  .wc-time { grid-column: 1 / 4; font-size: 0.72rem; color: var(--muted); margin-bottom: 0.3rem; }
+  .wc-symbol { grid-column: 1; font-size: 1.05rem; font-weight: 700; color: var(--text); align-self: center; }
+  .wc-price { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .wc-price .digit-normal { font-size: 1.3rem; }
+  .wc-price .digit-big { font-size: 1.7rem; }
+  .wc-price .digit-tiny { font-size: 1rem; vertical-align: super; }
+  .wc-meta-label { grid-column: 1; font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
+  .wc-meta-hilo { grid-column: 2 / 4; font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; text-align: left; }
+  .wc-meta-hilo span { color: var(--text); }
 
   main {
     display: block;
