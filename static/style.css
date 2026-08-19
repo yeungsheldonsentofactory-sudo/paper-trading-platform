@@ -578,17 +578,7 @@ tbody tr:hover { background: var(--panel-alt); }
   #header #settings-account-dc { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.5rem; }
   #header #role-badge { display: inline-block; }
   #header .row-chevron { grid-column: 3; width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
-  #header .acc-row {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.9rem;
-  }
-  #header .acc-row .row-icon { width: 19px; height: 19px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; margin-right: 0.8rem; flex-shrink: 0; }
-  #header .acc-row .acc-label { flex: 1; }
-  #header .acc-row strong { font-size: 0.95rem; }
+  #header .acc-row { display: none; }
   #header #logout-btn {
     display: flex;
     align-items: center;
