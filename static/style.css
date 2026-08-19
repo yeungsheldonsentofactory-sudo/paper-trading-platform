@@ -472,6 +472,14 @@ tbody tr:hover { background: var(--panel-alt); }
 
   #market-watch-header h2 { display: none; }
   #watch-view-toggle { display: flex; }
+  #watch-edit-btn, #watch-add-btn {
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    padding: 0.3rem;
+  }
+  #watch-edit-btn.active { border: none; color: var(--accent); }
+  #watch-edit-btn svg, #watch-add-btn svg { width: 24px; height: 24px; }
 
   .watch-card { display: grid; grid-template-columns: 34% 33% 33%; padding: 0.7rem 0.4rem; border-bottom: 1px solid var(--border); align-items: baseline; }
   .wc-time { grid-column: 1 / 4; font-size: 0.72rem; color: var(--muted); margin-bottom: 0.3rem; }
