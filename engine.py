@@ -64,9 +64,11 @@ class TradingEngine:
             total += pos["qty"] * price / leverage
         return total
 
-    def fund_summary(self) -> dict:
-        fund = self._fund_row()
-        positions = self._positions_raw()
+    def fund_summary(self, fund: dict | None = None, positions: list[dict] | None = None) -> dict:
+        # Callers that already hold the fund row / positions pass them in, so a
+        # single logical operation doesn't re-query the same rows several times.
+        fund = fund if fund is not None else self._fund_row()
+        positions = positions if positions is not None else self._positions_raw()
         floating = self._floating_pnl(positions)
         margin_used = self._margin_used(fund["leverage"], positions)
         equity = fund["balance"] + floating
@@ -95,8 +97,9 @@ class TradingEngine:
         entry_price = ask if side == "buy" else bid
 
         fund = self._fund_row()
+        positions = self._positions_raw()
         required_margin = qty * entry_price / fund["leverage"]
-        summary = self.fund_summary()
+        summary = self.fund_summary(fund, positions)
         if required_margin > summary["free_margin"]:
             raise ValueError("insufficient margin")
 
@@ -179,18 +182,7 @@ class TradingEngine:
     # ---------- views ----------
 
     def positions_view(self) -> list[dict]:
-        rows = self._positions_raw()
-        out = []
-        for pos in rows:
-            ba = self.hub.get_bid_ask(pos["symbol"])
-            floating = None
-            if ba:
-                bid, ask = ba
-                exit_price = bid if pos["side"] == "buy" else ask
-                sign = 1 if pos["side"] == "buy" else -1
-                floating = (exit_price - pos["entry_price"]) * pos["qty"] * sign
-            out.append({**pos, "floating_pnl": floating})
-        return out
+        return self._decorate_positions(self._positions_raw())
 
     def pending_view(self) -> list[dict]:
         return self.sb.table("pending_orders").select("*").execute().data
@@ -207,13 +199,39 @@ class TradingEngine:
 
     # ---------- tick processing: pending triggers, SL/TP, stop-out ----------
 
-    def process_tick(self):
-        self._check_pending_triggers()
-        self._check_sl_tp()
-        self._check_stop_out()
+    def process_tick(self) -> dict:
+        """Run one engine tick and return the state snapshot it already had to load.
 
-    def _check_pending_triggers(self):
-        for order in self.sb.table("pending_orders").select("*").execute().data:
+        The snapshot is handed to the broadcaster so every connected client is
+        served from these same queries — clients don't each poll the database.
+        """
+        pending = self.pending_view()
+        opened = self._check_pending_triggers(pending)
+
+        positions = self._positions_raw()
+        closed = self._check_sl_tp(positions)
+
+        # Only re-read after something actually changed the position set.
+        if opened or closed:
+            positions = self._positions_raw()
+            pending = self.pending_view()
+
+        fund = self._fund_row()
+        stopped_out = self._check_stop_out(fund, positions)
+        if stopped_out:
+            positions = self._positions_raw()
+            fund = self._fund_row()
+
+        return {
+            "account": self.fund_summary(fund, positions),
+            "positions": self._decorate_positions(positions),
+            "pending": pending,
+            "changed": bool(opened or closed or stopped_out),
+        }
+
+    def _check_pending_triggers(self, orders: list[dict]) -> bool:
+        triggered_any = False
+        for order in orders:
             ba = self.hub.get_bid_ask(order["symbol"])
             if ba is None:
                 continue
@@ -231,11 +249,12 @@ class TradingEngine:
             fund = self._fund_row()
             entry_price = ask if side == "buy" else bid
             required_margin = order["qty"] * entry_price / fund["leverage"]
-            summary = self.fund_summary()
+            summary = self.fund_summary(fund)
             ticket = order["ticket"]
             if required_margin > summary["free_margin"]:
                 self.sb.table("pending_orders").delete().eq("ticket", ticket).execute()
                 self._log(f"#{ticket} 掛單觸發失敗（保證金不足），已取消")
+                triggered_any = True
                 continue
 
             res = self.sb.table("positions").insert({
@@ -245,38 +264,54 @@ class TradingEngine:
             new_ticket = res.data[0]["ticket"]
             self.sb.table("pending_orders").delete().eq("ticket", ticket).execute()
             self._log(f"#{ticket} 掛單觸發 → #{new_ticket} {order['symbol']} @ {entry_price:.5f}")
+            triggered_any = True
+        return triggered_any
 
-    def _check_sl_tp(self):
-        for pos in self._positions_raw():
+    def _check_sl_tp(self, positions: list[dict]) -> bool:
+        closed_any = False
+        for pos in positions:
             ba = self.hub.get_bid_ask(pos["symbol"])
             if ba is None:
                 continue
             bid, ask = ba
+            hit = None
             if pos["side"] == "buy":
                 if pos["sl"] is not None and bid <= pos["sl"]:
-                    self._close(pos["ticket"], "sl")
+                    hit = "sl"
                 elif pos["tp"] is not None and bid >= pos["tp"]:
-                    self._close(pos["ticket"], "tp")
+                    hit = "tp"
             else:
                 if pos["sl"] is not None and ask >= pos["sl"]:
-                    self._close(pos["ticket"], "sl")
+                    hit = "sl"
                 elif pos["tp"] is not None and ask <= pos["tp"]:
-                    self._close(pos["ticket"], "tp")
+                    hit = "tp"
+            if hit:
+                self._close(pos["ticket"], hit)
+                closed_any = True
+        return closed_any
 
-    def _check_stop_out(self):
-        summary = self.fund_summary()
+    def _check_stop_out(self, fund: dict, positions: list[dict]) -> bool:
+        summary = self.fund_summary(fund, positions)
         if summary["margin_used"] <= 0:
-            return
+            return False
         if summary["margin_level"] is None or summary["margin_level"] >= STOP_OUT_LEVEL:
-            return
+            return False
 
-        positions = self._positions_raw()
-        positions.sort(key=lambda p: self._position_floating(p))
-        for pos in positions:
+        remaining = sorted(positions, key=lambda p: self._position_floating(p))
+        closed_any = False
+        for pos in remaining:
             self._close(pos["ticket"], "stop_out")
+            closed_any = True
             summary = self.fund_summary()
             if summary["margin_used"] <= 0 or (summary["margin_level"] or 999) >= STOP_OUT_LEVEL:
                 break
+        return closed_any
+
+    def _decorate_positions(self, positions: list[dict]) -> list[dict]:
+        return [{**pos, "floating_pnl": self._position_floating_or_none(pos)} for pos in positions]
+
+    def _position_floating_or_none(self, pos: dict) -> float | None:
+        return None if self.hub.get_bid_ask(pos["symbol"]) is None else self._position_floating(pos)
 
     def _position_floating(self, pos: dict) -> float:
         ba = self.hub.get_bid_ask(pos["symbol"])

@@ -116,7 +116,9 @@ async def no_cache_static(request, call_next):
     return response
 
 
-connected_sockets: set[WebSocket] = set()
+# socket -> role ("admin"/"investor"), or None for a not-yet-logged-in viewer.
+# Unauthenticated sockets only ever receive public prices, never fund state.
+connected_sockets: dict[WebSocket, str | None] = {}
 
 
 # ---------- auth ----------
@@ -201,32 +203,50 @@ class CancelRequest(BaseModel):
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(hub.start())
-    asyncio.create_task(tick_loop())
-    asyncio.create_task(broadcast_loop())
+    asyncio.create_task(engine_loop())
 
 
-async def tick_loop():
+async def engine_loop():
+    """One loop drives the engine and feeds every client from the same queries.
+
+    Previously each browser polled five endpoints every few seconds, so database
+    load scaled with the number of people watching. Now the tick already loads
+    the fund state it needs, and that single snapshot is pushed to everyone.
+    """
     while True:
         await asyncio.sleep(2.0)
+        snapshot = None
         try:
-            await asyncio.to_thread(engine.process_tick)
+            snapshot = await asyncio.to_thread(engine.process_tick)
+        except Exception as e:
+            # Never silently swallow: a broken tick means SL/TP stops running.
+            print(f"engine tick failed: {type(e).__name__}: {e}", flush=True)
+        await broadcast(snapshot)
+
+
+async def broadcast(snapshot: dict | None):
+    if not connected_sockets:
+        return
+    prices = hub.bid_ask_snapshot()
+    public_payload = json.dumps({"prices": prices})
+    private_payload = public_payload
+    if snapshot is not None:
+        private_payload = json.dumps({
+            "prices": prices,
+            "account": snapshot["account"],
+            "positions": snapshot["positions"],
+            "pending": snapshot["pending"],
+            "changed": snapshot["changed"],
+        })
+
+    dead = []
+    for ws, role in list(connected_sockets.items()):
+        try:
+            await ws.send_text(private_payload if role else public_payload)
         except Exception:
-            pass
-
-
-async def broadcast_loop():
-    while True:
-        await asyncio.sleep(2.0)
-        if not connected_sockets:
-            continue
-        payload = json.dumps({"prices": hub.bid_ask_snapshot()})
-        dead = set()
-        for ws in connected_sockets:
-            try:
-                await ws.send_text(payload)
-            except Exception:
-                dead.add(ws)
-        connected_sockets.difference_update(dead)
+            dead.append(ws)
+    for ws in dead:
+        connected_sockets.pop(ws, None)
 
 
 # ---------- routes ----------
@@ -343,9 +363,19 @@ async def pending_cancel(req: CancelRequest, user: dict = Depends(require_admin)
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
     await websocket.accept()
-    connected_sockets.add(websocket)
+    connected_sockets[websocket] = None
     try:
         while True:
-            await websocket.receive_text()
+            # Clients send {"token": ...} to upgrade from public prices to fund
+            # state, and again after logging in or out.
+            raw = await websocket.receive_text()
+            role = None
+            try:
+                token = json.loads(raw).get("token")
+                if token:
+                    role = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])["role"]
+            except (json.JSONDecodeError, jwt.PyJWTError, AttributeError):
+                role = None
+            connected_sockets[websocket] = role
     except WebSocketDisconnect:
-        connected_sockets.discard(websocket)
+        connected_sockets.pop(websocket, None)

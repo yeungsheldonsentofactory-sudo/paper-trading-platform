@@ -19,6 +19,7 @@ const state = {
   historyCustomEnd: null,
   lastHistory: [],
   lastAccountSummary: null,
+  ws: null,
   expandedTicket: null,
   orderQty: 0.01,
   orderSl: null,
@@ -92,6 +93,7 @@ async function login() {
   $("auth-msg").textContent = "";
   $("password-input").value = "";
   showLoggedIn();
+  sendWsAuth();
   refreshAll();
 }
 
@@ -101,6 +103,7 @@ function logout() {
   localStorage.removeItem("token");
   localStorage.removeItem("role");
   showLoggedOut();
+  sendWsAuth();
 }
 
 function showLoggedIn() {
@@ -841,6 +844,11 @@ async function refreshAccount() {
   if (!state.token) return;
   const a = await api("/api/account");
   if (a.error) return;
+  renderAccount(a);
+}
+
+function renderAccount(a) {
+  state.lastAccountSummary = a;
   $("acc-balance").textContent = fmt(a.balance);
   $("acc-equity").textContent = fmt(a.equity);
   $("acc-floating").textContent = fmt(a.floating_pnl);
@@ -854,10 +862,14 @@ async function refreshAccount() {
 async function refreshPositions() {
   if (!state.token) return;
   const data = await api("/api/positions");
-  state.lastPositions = data.positions;
+  renderPositions(data.positions);
+}
+
+function renderPositions(positions) {
+  state.lastPositions = positions;
   const isAdmin = state.role === "admin";
   const tbody = document.querySelector("#trade-table tbody");
-  tbody.innerHTML = data.positions
+  tbody.innerHTML = positions
     .map((p) => `<tr>
       <td>#${p.ticket}</td><td>${dispSym(p.symbol)}</td>
       <td>${p.side === "buy" ? "買" : "賣"}</td><td>${fmt(p.qty, 4)}</td>
@@ -868,22 +880,21 @@ async function refreshPositions() {
     .join("");
   if (isAdmin) {
     tbody.querySelectorAll(".close-btn").forEach((b) => {
-      const pos = data.positions.find((p) => p.ticket === parseInt(b.dataset.ticket, 10));
+      const pos = positions.find((p) => p.ticket === parseInt(b.dataset.ticket, 10));
       b.addEventListener("click", () => openCloseModal(pos));
     });
     tbody.querySelectorAll(".modify-btn").forEach((b) => {
-      const pos = data.positions.find((p) => p.ticket === parseInt(b.dataset.ticket, 10));
+      const pos = positions.find((p) => p.ticket === parseInt(b.dataset.ticket, 10));
       b.addEventListener("click", () => openModifyModal(pos));
     });
   }
 }
 
 async function renderPositionsPanel() {
-  let account = { balance: 0, equity: 0, margin_used: 0, free_margin: 0, margin_level: 0, floating_pnl: 0 };
-  if (state.token) {
-    const res = await api("/api/account");
-    if (!res.error) account = res;
-  }
+  // Runs on every price tick, so it reads the account the websocket already
+  // pushed rather than issuing its own request each time.
+  const zero = { balance: 0, equity: 0, margin_used: 0, free_margin: 0, margin_level: 0, floating_pnl: 0 };
+  const account = (state.token && state.lastAccountSummary) ? state.lastAccountSummary : zero;
   $("positions-pnl-text").textContent = `${fmt(account.floating_pnl)} USD`;
   $("positions-header").className = account.floating_pnl >= 0 ? "pnl-pos-bg" : "pnl-neg-bg";
   $("pp-balance").textContent = fmt(account.balance);
@@ -973,9 +984,13 @@ function openPositionActionSheet(ticket) {
 async function refreshPending() {
   if (!state.token) return;
   const data = await api("/api/pending");
+  renderPending(data.pending);
+}
+
+function renderPending(pending) {
   const isAdmin = state.role === "admin";
   const tbody = document.querySelector("#pending-table tbody");
-  tbody.innerHTML = data.pending
+  tbody.innerHTML = pending
     .map((p) => `<tr>
       <td>#${p.ticket}</td><td>${dispSym(p.symbol)}</td><td>${p.order_type}</td>
       <td>${fmt(p.qty, 4)}</td><td>${fmt(p.trigger_price, pricePrecision(p.symbol))}</td>
@@ -1003,11 +1018,13 @@ async function refreshHistory() {
     </tr>`)
     .join("");
 
-  const account = await api("/api/account");
-  if (!account.error) {
-    fillHistorySummary("ha", account);
-    state.lastAccountSummary = account;
+  // The websocket keeps this fresh; only fetch on the very first load.
+  let account = state.lastAccountSummary;
+  if (!account) {
+    const res = await api("/api/account");
+    if (!res.error) account = state.lastAccountSummary = res;
   }
+  if (account) fillHistorySummary("ha", account);
 
   if ($("history-mobile-panel").classList.contains("mobile-active")) renderHistoryMobilePanel();
 }
@@ -1132,9 +1149,17 @@ function refreshAll() {
 
 // ---------- websocket ----------
 
+function sendWsAuth() {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ token: state.token || null }));
+  }
+}
+
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  state.ws = ws;
+  ws.onopen = sendWsAuth;
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     const newPrices = data.prices;
@@ -1151,6 +1176,19 @@ function connectWs() {
     state.prices = newPrices;
     renderMarketWatch();
     updateOneClickPrices();
+
+    // Fund state arrives on the same tick for logged-in sockets, so the client
+    // no longer polls /api/account, /api/positions or /api/pending at all.
+    if (data.account) {
+      renderAccount(data.account);
+      renderPositions(data.positions);
+      renderPending(data.pending);
+      // History and the journal only move when a trade actually opens/closes.
+      if (data.changed) {
+        refreshHistory();
+        refreshJournal();
+      }
+    }
     if ($("positions-panel").classList.contains("mobile-active")) renderPositionsPanel();
   };
   ws.onclose = () => setTimeout(connectWs, 2000);
@@ -1243,5 +1281,7 @@ $("pp-add-btn").addEventListener("click", () => setMobilePanel("order-panel"));
   }
   connectWs();
   setInterval(() => loadChart(state.currentSymbol, state.timeframe), 10000);
-  setInterval(refreshAll, 4000);
+  // Live state is pushed over the websocket; this is only a slow safety net
+  // in case a push is missed while the socket is reconnecting.
+  setInterval(refreshAll, 60000);
 })();

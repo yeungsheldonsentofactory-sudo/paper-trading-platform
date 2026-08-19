@@ -8,7 +8,7 @@ import yfinance as yf
 
 SPREAD_BPS = 5  # each side, in basis points (0.05%) -> ~0.10% total spread
 
-TIMEFRAME_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400}
+TIMEFRAME_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 
 
 class MarketDataProvider(ABC):
@@ -245,6 +245,8 @@ class MarketDataHub:
         self.all_symbols = [s for p in providers for s in p.symbols]
         self.provider_by_symbol = {s: p for p in providers for s in p.symbols}
         self.aggregator = CandleAggregator()
+        self._ohlcv_cache: dict[tuple, tuple[float, list[dict]]] = {}
+        self._ohlcv_locks: dict[tuple, asyncio.Lock] = {}
 
     async def start(self):
         await asyncio.gather(*(self._poll_loop(p) for p in self.providers))
@@ -288,5 +290,32 @@ class MarketDataHub:
             return []
         if not provider.has_history:
             return self.aggregator.get(symbol, timeframe, limit)
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, provider.fetch_ohlcv, symbol, timeframe, limit)
+
+        # Candles are shared, not per-viewer: without this every open chart hit
+        # the exchange directly, so N viewers meant N times the upstream calls
+        # and a real risk of being rate-limited (which already cost us Binance,
+        # Yahoo and fxratesapi). One fetch now serves everyone for a short TTL.
+        key = (symbol, timeframe, limit)
+        ttl = self._ohlcv_ttl(timeframe)
+        cached = self._ohlcv_cache.get(key)
+        if cached and (time.time() - cached[0]) < ttl:
+            return cached[1]
+
+        lock = self._ohlcv_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            # A queued waiter may find the cache already refreshed by the winner.
+            cached = self._ohlcv_cache.get(key)
+            if cached and (time.time() - cached[0]) < ttl:
+                return cached[1]
+            loop = asyncio.get_event_loop()
+            bars = await loop.run_in_executor(None, provider.fetch_ohlcv, symbol, timeframe, limit)
+            if bars:
+                self._ohlcv_cache[key] = (time.time(), bars)
+            elif cached:
+                return cached[1]  # upstream hiccup: keep serving the last good candles
+            return bars
+
+    @staticmethod
+    def _ohlcv_ttl(timeframe: str) -> float:
+        # Only the in-progress candle moves, so scale the TTL to the bar size.
+        return max(10.0, min(60.0, TIMEFRAME_SECONDS.get(timeframe, 60) / 6))
