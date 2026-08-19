@@ -379,7 +379,7 @@ function renderMarketWatch() {
     tbody.querySelectorAll("tr").forEach((tr) => {
       tr.addEventListener("click", () => {
         selectSymbol(tr.dataset.symbol);
-        if (isMobileView()) setMobilePanel("order-panel");
+        if (isMobileView()) setMobilePanel("chart-area");
       });
     });
   }
