@@ -51,8 +51,8 @@ class CryptoProvider(MarketDataProvider):
             try:
                 ticker = self.exchange.fetch_ticker(self._ex_symbol(symbol))
                 prices[symbol] = float(ticker["last"])
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"CryptoProvider.fetch({symbol}) failed: {type(e).__name__}: {e}", flush=True)
         return prices
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int) -> list[dict]:
