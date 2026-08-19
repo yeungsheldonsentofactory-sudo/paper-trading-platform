@@ -1,0 +1,10 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+ccxt==4.4.22
+yfinance==0.2.44
+websockets==13.1
+pydantic==2.9.2
+requests==2.34.2
+supabase==2.31.0
+bcrypt==5.0.0
+pyjwt==2.13.0

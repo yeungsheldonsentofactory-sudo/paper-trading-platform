@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+*.log
+supabase_config.json
+finnhub_key.txt
+jwt_secret.txt
