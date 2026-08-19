@@ -26,11 +26,11 @@ SESSION_HOURS = 24 * 7  # a week — this is a shared login, not a personal acco
 CRYPTO_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 STOCK_SYMBOLS = ["AAPL", "TSLA", "NVDA"]
 
-# EUR and gold are backed by real, liquid Binance spot markets (EUR/USDT,
-# PAXG/USDT) — same reliable feed as crypto, no rate limits, real candles.
+# EUR and gold are backed by real, liquid Kraken spot markets (EUR/USD,
+# PAXG/USD) — same reliable feed as crypto, no rate limits, real candles.
 BINANCE_FOREX_MAP = {
-    "EURUSD=X": "EUR/USDT",
-    "XAUUSD=X": "PAXG/USDT",
+    "EURUSD=X": "EUR/USD",
+    "XAUUSD=X": "PAXG/USD",
 }
 FOREX_SYMBOLS = list(BINANCE_FOREX_MAP.keys())
 DELAYED_SYMBOLS = STOCK_SYMBOLS + FOREX_SYMBOLS

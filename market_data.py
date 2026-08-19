@@ -39,7 +39,10 @@ class CryptoProvider(MarketDataProvider):
 
     def __init__(self, symbols: list[str], symbol_map: dict[str, str] | None = None):
         self.symbols = symbols
-        self.exchange = ccxt.binance()
+        # Binance blocks US IPs (451 Unavailable For Legal Reasons), which is
+        # where our host runs — Kraken serves the same public market data
+        # without that restriction and carries all the pairs we need.
+        self.exchange = ccxt.kraken()
         self.symbol_map = symbol_map or {}
 
     def _ex_symbol(self, symbol: str) -> str:
