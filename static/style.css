@@ -600,7 +600,7 @@ tbody tr:hover { background: var(--panel-alt); }
     width: 100%;
     padding: 0.85rem 1rem;
     border-bottom: 1px solid var(--border);
-    background: transparent;
+    background: var(--panel-alt, #1c1c1e);
     text-align: left;
   }
   .settings-nav-row .row-icon { width: 17px; height: 17px; fill: none; stroke: white; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
