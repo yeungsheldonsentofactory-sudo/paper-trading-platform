@@ -22,6 +22,8 @@ const state = {
   sparkline: [],
 };
 
+const SPREAD_BPS_CLIENT = 5; // mirrors engine.py SPREAD_BPS, used to seed the chart with a visual bid/ask spread from historical closes
+
 const $ = (id) => document.getElementById(id);
 
 async function api(path, opts = {}) {
@@ -398,7 +400,22 @@ function selectSymbol(symbol) {
   updateOneClickPrices();
   loadChart(symbol, state.timeframe);
   loadDayHiLo(symbol);
+  seedSparkline(symbol);
   clearLines();
+}
+
+async function seedSparkline(symbol) {
+  const data = await api(`/api/ohlcv/${symbol}?timeframe=1m&limit=90`);
+  if (state.currentSymbol !== symbol) return; // symbol changed again while awaiting
+  const bars = data.bars || [];
+  if (!bars.length) return;
+  const halfSpread = SPREAD_BPS_CLIENT / 10000;
+  const seeded = bars.map((b) => ({
+    bid: b.close * (1 - halfSpread),
+    ask: b.close * (1 + halfSpread),
+  }));
+  state.sparkline = seeded.concat(state.sparkline).slice(-90);
+  drawSparkline();
 }
 
 function updateOneClickPrices() {
@@ -423,7 +440,7 @@ function renderMobileQuote() {
 
 function pushSparklinePoint(bid, ask) {
   state.sparkline.push({ bid, ask });
-  if (state.sparkline.length > 80) state.sparkline.shift();
+  if (state.sparkline.length > 90) state.sparkline.shift();
   drawSparkline();
 }
 
@@ -443,7 +460,7 @@ function drawSparkline() {
 
   const line = (key) => data.map((d, i) => `${xAt(i).toFixed(1)},${yAt(d[key]).toFixed(1)}`).join(" ");
 
-  const gridCount = 4;
+  const gridCount = 8;
   let gridLines = "";
   for (let i = 0; i <= gridCount; i++) {
     const v = min + (range * i) / gridCount;
@@ -1026,6 +1043,7 @@ function setMobilePanel(panelId) {
     renderTicketField("dev");
     $("qty-display").value = state.orderQty.toFixed(2);
     renderMobileQuote();
+    if (state.sparkline.length < 2) seedSparkline(state.currentSymbol);
   }
 }
 
