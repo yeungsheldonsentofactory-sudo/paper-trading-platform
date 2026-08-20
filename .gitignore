@@ -5,3 +5,4 @@ __pycache__/
 supabase_config.json
 finnhub_key.txt
 jwt_secret.txt
+.pytest_cache/
