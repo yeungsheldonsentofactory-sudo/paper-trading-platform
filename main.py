@@ -256,28 +256,55 @@ class CancelRequest(BaseModel):
 
 # ---------- background loops ----------
 
+BROADCAST_INTERVAL = 0.5  # how often quotes reach the browser
+ENGINE_TICK_INTERVAL = 2.0  # how often SL/TP and fund state are re-evaluated
+
+# Latest fund state from the engine tick, attached to outgoing broadcasts.
+# Kept separate so a quote never waits on a database round-trip.
+_latest_snapshot: dict | None = None
+
+
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(hub.start())
     asyncio.create_task(engine_loop())
+    asyncio.create_task(broadcast_loop())
 
 
 async def engine_loop():
-    """One loop drives the engine and feeds every client from the same queries.
+    """Runs the trading engine: pending triggers, SL/TP, stop-out.
 
-    Previously each browser polled five endpoints every few seconds, so database
-    load scaled with the number of people watching. Now the tick already loads
-    the fund state it needs, and that single snapshot is pushed to everyone.
+    Its queries also produce the fund snapshot every client is served from, so
+    database load stays flat no matter how many people are watching.
     """
+    global _latest_snapshot
     while True:
-        await asyncio.sleep(2.0)
-        snapshot = None
+        await asyncio.sleep(ENGINE_TICK_INTERVAL)
         try:
-            snapshot = await asyncio.to_thread(engine.process_tick)
+            _latest_snapshot = await asyncio.to_thread(engine.process_tick)
         except Exception as e:
             # Never silently swallow: a broken tick means SL/TP stops running.
             print(f"engine tick failed: {type(e).__name__}: {e}", flush=True)
+
+
+async def broadcast_loop():
+    """Pushes quotes on their own clock.
+
+    This used to be part of the engine tick, so every quote update waited on
+    ~0.6s of database work it never needed — prices only live in memory. Split
+    out, quotes go out several times a second while the engine keeps its own
+    slower cadence.
+    """
+    global _latest_snapshot
+    while True:
+        await asyncio.sleep(BROADCAST_INTERVAL)
+        snapshot = _latest_snapshot
         await broadcast(snapshot)
+        # "changed" tells clients to refetch history/journal. The same snapshot
+        # is re-sent until the next tick, so clear the flag once it has gone
+        # out or every client would refetch on each broadcast.
+        if snapshot is not None and snapshot.get("changed"):
+            snapshot["changed"] = False
 
 
 async def broadcast(snapshot: dict | None):

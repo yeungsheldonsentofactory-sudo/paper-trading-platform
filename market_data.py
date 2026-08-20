@@ -22,6 +22,16 @@ class MarketDataProvider(ABC):
     def fetch(self) -> dict[str, float]:
         """Return {symbol: last_price} for every symbol this provider owns."""
 
+    def fetch_quotes(self) -> dict[str, tuple[float, float]]:
+        """Return {symbol: (bid, ask)} where the source publishes a real book.
+
+        Worth implementing when available: the order book moves whenever a
+        maker adjusts, while the last trade price only moves when something
+        actually trades, so real quotes update several times more often — and
+        they're the true spread rather than a synthetic one.
+        """
+        return {}
+
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int) -> list[dict]:
         """Return candle bars [{time, open, high, low, close}] oldest-first."""
         return []
@@ -44,13 +54,54 @@ class CryptoProvider(MarketDataProvider):
         # without that restriction and carries all the pairs we need.
         self.exchange = ccxt.kraken()
         self.symbol_map = symbol_map or {}
+        self._last_tickers: dict = {}
 
     def _ex_symbol(self, symbol: str) -> str:
         return self.symbol_map.get(symbol, symbol)
 
+    # One batched request instead of one per symbol. Fetching five symbols
+    # individually took ~6s — longer than the poll interval itself, so quotes
+    # were always seconds behind. Batched it is ~1s and costs a fifth of the
+    # rate-limit budget, which is what makes a faster poll safe.
+    poll_interval = 1.5
+
     def fetch(self) -> dict[str, float]:
+        tickers = self._fetch_tickers()
         prices = {}
         for symbol in self.symbols:
+            last = (tickers.get(self._ex_symbol(symbol)) or {}).get("last")
+            if last is not None:
+                prices[symbol] = float(last)
+        # A partial batch (exchange omitted a pair) shouldn't silently freeze
+        # that symbol's quote for everyone.
+        missing = [s for s in self.symbols if s not in prices]
+        if missing:
+            prices.update(self._fetch_one_by_one(missing))
+        self._last_tickers = tickers
+        return prices
+
+    def fetch_quotes(self) -> dict[str, tuple[float, float]]:
+        """Real bid/ask from the same batched response fetch() just used."""
+        quotes = {}
+        for symbol in self.symbols:
+            ticker = self._last_tickers.get(self._ex_symbol(symbol)) or {}
+            bid, ask = ticker.get("bid"), ticker.get("ask")
+            # Ignore a missing or crossed book rather than quoting nonsense;
+            # the hub falls back to a synthetic spread for anything absent.
+            if bid is not None and ask is not None and 0 < float(bid) <= float(ask):
+                quotes[symbol] = (float(bid), float(ask))
+        return quotes
+
+    def _fetch_tickers(self) -> dict:
+        try:
+            return self.exchange.fetch_tickers([self._ex_symbol(s) for s in self.symbols])
+        except Exception as e:
+            print(f"CryptoProvider.fetch_tickers failed: {type(e).__name__}: {e}", flush=True)
+            return {}
+
+    def _fetch_one_by_one(self, symbols: list[str] | None = None) -> dict[str, float]:
+        prices = {}
+        for symbol in (symbols if symbols is not None else self.symbols):
             try:
                 ticker = self.exchange.fetch_ticker(self._ex_symbol(symbol))
                 prices[symbol] = float(ticker["last"])
@@ -241,6 +292,7 @@ class MarketDataHub:
     def __init__(self, providers: list[MarketDataProvider]):
         self.providers = providers
         self.prices: dict[str, float] = {}
+        self.quotes: dict[str, tuple[float, float]] = {}  # real bid/ask where published
         self.last_updated: float = 0.0
         self.all_symbols = [s for p in providers for s in p.symbols]
         self.provider_by_symbol = {s: p for p in providers for s in p.symbols}
@@ -255,8 +307,10 @@ class MarketDataHub:
         loop = asyncio.get_event_loop()
         while True:
             fetched = await loop.run_in_executor(None, provider.fetch)
+            quotes = await loop.run_in_executor(None, provider.fetch_quotes)
             now = time.time()
             self.prices.update(fetched)
+            self.quotes.update(quotes)
             if not provider.has_history:
                 for symbol, price in fetched.items():
                     self.aggregator.add_tick(symbol, price, now)
@@ -267,6 +321,12 @@ class MarketDataHub:
         return self.prices.get(symbol)
 
     def get_bid_ask(self, symbol: str) -> tuple[float, float] | None:
+        # Prefer the venue's real book: it moves whenever a maker adjusts,
+        # not only when a trade prints, and it's the true spread. Sources
+        # that only publish a price (stocks here) still get a synthetic one.
+        quote = self.quotes.get(symbol)
+        if quote is not None:
+            return quote
         mid = self.prices.get(symbol)
         if mid is None:
             return None
