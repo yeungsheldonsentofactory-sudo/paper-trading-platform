@@ -639,3 +639,24 @@ tbody tr:hover { background: var(--panel-alt); }
 
   #sl-tp-fields { flex-direction: column; }
 }
+
+/* Live-data status: a stale quote that looks live is the dangerous case. */
+#ws-stale-banner {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  padding: 0.45rem 0.75rem;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #1c1c1e;
+  background: #ff9500;
+}
+body.ws-stale #ws-stale-banner { display: block; }
+body.ws-stale #market-watch td:nth-child(2),
+body.ws-stale #market-watch td:nth-child(3),
+body.ws-stale .wc-price,
+body.ws-stale .mq-num { opacity: 0.45; }

@@ -3,6 +3,8 @@ import datetime
 import json
 import os
 import secrets
+import threading
+import time
 from pathlib import Path
 
 import bcrypt
@@ -172,6 +174,7 @@ class MarketOrderRequest(BaseModel):
     qty: float
     sl: float | None = None
     tp: float | None = None
+    request_id: str | None = None
 
 
 class PendingOrderRequest(BaseModel):
@@ -181,11 +184,64 @@ class PendingOrderRequest(BaseModel):
     trigger_price: float
     sl: float | None = None
     tp: float | None = None
+    request_id: str | None = None
 
 
 class CloseRequest(BaseModel):
     ticket: int
     qty: float | None = None
+    request_id: str | None = None
+
+
+# ---------- idempotency ----------
+#
+# A double-tapped Buy button or a retried request must not execute twice.
+# Replays of the same request_id return the original result instead of
+# placing a second trade. In-memory is enough here: one instance, and the
+# window that matters is the few seconds around a duplicate submit.
+
+_IDEMPOTENCY_TTL = 120.0
+_PENDING = object()  # slot reserved, the original call is still running
+_idempotency_cache: dict[str, tuple[float, object]] = {}
+_idempotency_lock = threading.Lock()
+
+
+async def idempotent(request_id: str | None):
+    """Reserve a request_id. Returns (result, claimed).
+
+    claimed=True means this caller owns the execution and must record the
+    result. Otherwise the work was already done (or is in flight, in which
+    case we wait for it) and the original result is replayed — a duplicate
+    must never look like a failure to the user.
+    """
+    if not request_id:
+        return None, True
+    now = time.time()
+    with _idempotency_lock:
+        for key, (ts, _) in list(_idempotency_cache.items()):
+            if now - ts > _IDEMPOTENCY_TTL:
+                del _idempotency_cache[key]
+        hit = _idempotency_cache.get(request_id)
+        if hit is None:
+            # Reserve the slot so a concurrent duplicate can't also claim it.
+            _idempotency_cache[request_id] = (now, _PENDING)
+            return None, True
+
+    # Someone else owns it. Wait briefly for their result rather than
+    # reporting an error the user didn't cause.
+    for _ in range(100):  # up to ~10s
+        with _idempotency_lock:
+            entry = _idempotency_cache.get(request_id)
+            if entry is not None and entry[1] is not _PENDING:
+                return entry[1], False
+        await asyncio.sleep(0.1)
+    return {"ok": False, "error": "請求逾時，請重試"}, False
+
+
+def record_idempotent(request_id: str | None, result: dict):
+    if request_id:
+        with _idempotency_lock:
+            _idempotency_cache[request_id] = (time.time(), result)
 
 
 class ModifyRequest(BaseModel):
@@ -316,30 +372,45 @@ async def journal(user: dict = Depends(get_current_user)):
 
 @app.post("/api/order/market")
 async def order_market(req: MarketOrderRequest, user: dict = Depends(require_admin)):
+    cached, claimed = await idempotent(req.request_id)
+    if not claimed:
+        return cached
     try:
         pos = await asyncio.to_thread(engine.place_market_order, req.symbol, req.side, req.qty, req.sl, req.tp)
-        return {"ok": True, "ticket": pos["ticket"]}
+        result = {"ok": True, "ticket": pos["ticket"]}
     except ValueError as e:
-        return {"ok": False, "error": str(e)}
+        result = {"ok": False, "error": str(e)}
+    record_idempotent(req.request_id, result)
+    return result
 
 
 @app.post("/api/order/pending")
 async def order_pending(req: PendingOrderRequest, user: dict = Depends(require_admin)):
+    cached, claimed = await idempotent(req.request_id)
+    if not claimed:
+        return cached
     try:
         order = await asyncio.to_thread(
             engine.place_pending_order, req.symbol, req.order_type, req.qty, req.trigger_price, req.sl, req.tp)
-        return {"ok": True, "ticket": order["ticket"]}
+        result = {"ok": True, "ticket": order["ticket"]}
     except ValueError as e:
-        return {"ok": False, "error": str(e)}
+        result = {"ok": False, "error": str(e)}
+    record_idempotent(req.request_id, result)
+    return result
 
 
 @app.post("/api/position/close")
 async def position_close(req: CloseRequest, user: dict = Depends(require_admin)):
+    cached, claimed = await idempotent(req.request_id)
+    if not claimed:
+        return cached
     try:
         trade = await asyncio.to_thread(engine.close_position, req.ticket, "manual", req.qty)
-        return {"ok": True, "pnl": trade["pnl"]}
+        result = {"ok": True, "pnl": trade["pnl"]}
     except ValueError as e:
-        return {"ok": False, "error": str(e)}
+        result = {"ok": False, "error": str(e)}
+    record_idempotent(req.request_id, result)
+    return result
 
 
 @app.post("/api/position/modify")

@@ -20,6 +20,9 @@ const state = {
   lastHistory: [],
   lastAccountSummary: null,
   ws: null,
+  wsLive: false,
+  wsRetries: 0,
+  wsLastMsg: 0,
   expandedTicket: null,
   orderQty: 0.01,
   orderSl: null,
@@ -44,6 +47,14 @@ async function api(path, opts = {}) {
 
 function post(path, body) {
   return api(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+// A double-tapped Buy button (easy to do on a phone) or a retried request must
+// not open two positions, so every fund-changing submit carries its own id and
+// the server replays the first result for duplicates.
+function newRequestId() {
+  return (crypto.randomUUID && crypto.randomUUID()) ||
+    `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function fmt(n, decimals = 2) {
@@ -635,7 +646,7 @@ async function submitMarketOrder(side) {
   if (!qty || qty <= 0) { $("order-msg").textContent = "請輸入有效數量"; return; }
   const sl = parseFloat($("sl-input").value) || null;
   const tp = parseFloat($("tp-input").value) || null;
-  const result = await post("/api/order/market", { symbol: state.currentSymbol, side, qty, sl, tp });
+  const result = await post("/api/order/market", { symbol: state.currentSymbol, side, qty, sl, tp, request_id: newRequestId() });
   $("order-msg").textContent = result.ok ? `#${result.ticket} 市價單成交` : `錯誤：${result.error}`;
   refreshAll();
 }
@@ -718,13 +729,29 @@ function openSymbolSwitcher() {
   openActionSheet("選擇標的", actions);
 }
 
+let mobileOrderInFlight = false;
+
 async function submitMobileMarketOrder(side) {
   const qty = parseFloat($("qty-display").value) || state.orderQty;
   if (!qty || qty <= 0) { $("order-mobile-msg").textContent = "請輸入有效數量"; return; }
-  const result = await post("/api/order/market", {
-    symbol: state.currentSymbol, side, qty, sl: state.orderSl, tp: state.orderTp,
-  });
-  $("order-mobile-msg").textContent = result.ok ? `#${result.ticket} 市價單成交` : `錯誤：${result.error}`;
+  // Guard the button itself as well as the request: on a phone the second tap
+  // usually lands before the first response, so blocking it here is what the
+  // user actually feels, while request_id covers retries we can't see.
+  if (mobileOrderInFlight) return;
+  mobileOrderInFlight = true;
+  $("mq-buy-btn").disabled = true;
+  $("mq-sell-btn").disabled = true;
+  try {
+    const result = await post("/api/order/market", {
+      symbol: state.currentSymbol, side, qty, sl: state.orderSl, tp: state.orderTp,
+      request_id: newRequestId(),
+    });
+    $("order-mobile-msg").textContent = result.ok ? `#${result.ticket} 市價單成交` : `錯誤：${result.error}`;
+  } finally {
+    mobileOrderInFlight = false;
+    $("mq-buy-btn").disabled = false;
+    $("mq-sell-btn").disabled = false;
+  }
   refreshAll();
 }
 
@@ -737,6 +764,7 @@ async function submitPendingOrder() {
   const tp = parseFloat($("tp-input").value) || null;
   const result = await post("/api/order/pending", {
     symbol: state.currentSymbol, order_type: $("pending-type").value, qty, trigger_price: price, sl, tp,
+    request_id: newRequestId(),
   });
   $("order-msg").textContent = result.ok ? `#${result.ticket} 掛單已送出` : `錯誤：${result.error}`;
   refreshAll();
@@ -811,7 +839,7 @@ function openCloseModal(pos) {
   const onConfirm = async () => {
     confirmBtn.disabled = true;
     const qty = parseFloat(qtyInput.value) || null;
-    const result = await post("/api/position/close", { ticket: pos.ticket, qty });
+    const result = await post("/api/position/close", { ticket: pos.ticket, qty, request_id: newRequestId() });
     confirmBtn.textContent = result.ok ? `已平倉 ✓ ${fmt(result.pnl)}` : `錯誤：${result.error}`;
     refreshAll();
     setTimeout(cleanup, 2000);
@@ -1155,12 +1183,53 @@ function sendWsAuth() {
   }
 }
 
+function markLive(live) {
+  // Frozen prices that still look current are worse than visibly stale ones,
+  // especially on a phone that just lost signal.
+  state.wsLive = live;
+  document.body.classList.toggle("ws-stale", !live);
+}
+
+function scheduleReconnect() {
+  // Exponential backoff with jitter: when the host restarts, every client
+  // drops at once, and a fixed retry would stampede it on the way back up.
+  state.wsRetries = (state.wsRetries || 0) + 1;
+  const base = Math.min(30000, 1000 * 2 ** (state.wsRetries - 1));
+  const delay = base * (0.5 + Math.random() * 0.5);
+  clearTimeout(state.wsRetryTimer);
+  state.wsRetryTimer = setTimeout(connectWs, delay);
+}
+
+function noteWsActivity() {
+  state.wsLastMsg = Date.now();
+  markLive(true);
+}
+
+function startWsWatchdog() {
+  clearInterval(state.wsWatchdog);
+  // Mobile networks drop connections without closing them; if the server's
+  // 2s broadcast has been silent this long, the socket is dead in practice.
+  state.wsWatchdog = setInterval(() => {
+    if (!state.wsLastMsg) return;
+    if (Date.now() - state.wsLastMsg > 15000) {
+      markLive(false);
+      try { state.ws && state.ws.close(); } catch (e) { /* already closing */ }
+    }
+  }, 5000);
+}
+
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
   state.ws = ws;
-  ws.onopen = sendWsAuth;
+  ws.onopen = () => {
+    state.wsRetries = 0;
+    noteWsActivity();
+    startWsWatchdog();
+    sendWsAuth();
+  };
   ws.onmessage = (event) => {
+    noteWsActivity();
     const data = JSON.parse(event.data);
     const newPrices = data.prices;
     for (const sym in newPrices) {
@@ -1191,7 +1260,11 @@ function connectWs() {
     }
     if ($("positions-panel").classList.contains("mobile-active")) renderPositionsPanel();
   };
-  ws.onclose = () => setTimeout(connectWs, 2000);
+  ws.onclose = () => {
+    markLive(false);
+    scheduleReconnect();
+  };
+  ws.onerror = () => { try { ws.close(); } catch (e) { /* onclose will follow */ } };
 }
 
 // ---------- tabs ----------
